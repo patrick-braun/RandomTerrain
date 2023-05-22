@@ -42,11 +42,12 @@ float translateX = 0.0f;
 float translateY = 0.0f;
 float translateZ = -2.0f;
 
-bool animate = true;
+bool animate = false;
 bool drawPoints = false;
 bool wireFrame = false;
 
 int seed = 0;
+unsigned int step = 0;
 
 float *d_heightMap = nullptr;
 float *d_heightMapNext = nullptr;
@@ -68,12 +69,6 @@ float animationRate = -0.001f;
 extern "C" void
 cudaGenerateHeightmapKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height,
                             int seed);
-
-extern "C" void
-cudaCopyOverKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height);
-
-extern "C" void
-cudaPerlinKernel(float *d_heightMap, unsigned int width, unsigned int height, int seed);
 
 extern "C" void
 cudaUpdateHeightmapKernel(float *d_heightMap, float *d_heightMapNext, float *heightMapOut, unsigned int width,
@@ -161,8 +156,7 @@ void runTerrainGen(int argc, char **argv) {
 
     seed = rand();
     printf("Generating terrain with seed: %u\n", seed);
-    cudaPerlinKernel(d_heightMap, meshSize, meshSize, seed);
-    //cudaGenerateHeightmapKernel(d_heightMap, nullptr, meshSize, meshSize, seed);
+    cudaGenerateHeightmapKernel(d_heightMap, nullptr, meshSize, meshSize, seed);
 
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
@@ -209,11 +203,9 @@ void runCuda() {
             (void **) &g_hptr, &num_bytes, cuda_heightVB_resource));
 
 
-    auto offset = static_cast<unsigned int>(animTime * 100) % meshSize;
+    auto offset = step++ % meshSize;
     if (offset == 0) {
-        cudaCopyOverKernel(d_heightMapNext, d_heightMap, meshSize, meshSize);
-        cudaPerlinKernel(d_heightMapNext, meshSize, meshSize, seed);
-        //cudaGenerateHeightmapKernel(d_heightMapNext, d_heightMap, meshSize, meshSize, seed);
+        cudaGenerateHeightmapKernel(d_heightMapNext, d_heightMap, meshSize, meshSize, seed);
     }
 
     cudaUpdateHeightmapKernel(

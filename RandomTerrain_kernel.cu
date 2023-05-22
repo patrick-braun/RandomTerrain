@@ -1,4 +1,4 @@
-#include "cuda_noise.cuh"
+#include "noise.cuh"
 
 // Round a / b to nearest higher integer value
 int cuda_iDivUp(int a, int b) { return (a + (b - 1)) / b; }
@@ -20,38 +20,7 @@ generateHeightmapKernel(float *heightMap, float *heightMapPrev, unsigned int wid
 
     float3 pos = make_float3(fx, fy, 0.0f);
 
-    float tmp = cudaNoise::repeaterPerlin(pos, 0.2f, seed, 32, 1.8f, 0.45f);
-    if (tmp < 0.01) {
-        tmp = 0.01f;
-    }
-    heightMap[idx] = tmp;
-}
-
-__global__ void copyOverKernel(float *heightMap, float *heightMapPrev, unsigned int width, unsigned int height) {
-    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    unsigned int idx = y * width + x;
-
-    if (y == 0) {
-        heightMap[idx] = heightMapPrev[(height - 1) * width + x];
-    }
-}
-
-__global__ void perlinKernel(float *heightMap, unsigned int width, unsigned int height, int seed) {
-    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    unsigned int idx = y * width + x;
-
-    if (y == height - 1) {
-        return;
-    }
-
-    float fx = static_cast<float>(x) / (blockDim.x * gridDim.x) * 16.0f;
-    float fy = static_cast<float>(y) / (blockDim.y * gridDim.y) * 16.0f;
-
-    float3 pos = make_float3(fx, fy, 0.0f);
-
-    float tmp = cudaNoise::repeaterPerlin(pos, 0.2f, seed, 32, 1.8f, 0.45f);
+    float tmp = __TMP__(pos, 0.2f, seed, 32, 1.8f, 0.45f);
     if (tmp < 0.01) {
         tmp = 0.01f;
     }
@@ -103,20 +72,6 @@ cudaGenerateHeightmapKernel(float *d_heightMap, float *d_heightMapPrev, unsigned
     dim3 block(8, 8, 1);
     dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
     generateHeightmapKernel<<<grid, block>>>(d_heightMap, d_heightMapPrev, width, height, seed);
-}
-
-extern "C" void
-cudaCopyOverKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height) {
-    dim3 block(8, 8, 1);
-    dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
-    copyOverKernel<<<grid, block>>>(d_heightMap, d_heightMapPrev, width, height);
-}
-
-extern "C" void
-cudaPerlinKernel(float *d_heightMap, unsigned int width, unsigned int height, int seed) {
-    dim3 block(8, 8, 1);
-    dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
-    perlinKernel<<<grid, block>>>(d_heightMap, width, height, seed);
 }
 
 extern "C" void
