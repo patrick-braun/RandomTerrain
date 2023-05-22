@@ -18,7 +18,6 @@ void main()
     vec3 worldSpaceNormalVector = normalize(worldSpaceNormal);
 
     float facing = max(0.0, dot(eyeSpaceNormalVector, -eyeVector));
-    float fresnel = pow(1.0 - facing, 5.0); // Fresnel approximation
     float diffuse = max(0.0, dot(worldSpaceNormalVector, lightDir));
 
     vec4 selectedColor;
@@ -33,5 +32,5 @@ void main()
     } else {
         selectedColor = mountainColor;
     }
-    gl_FragColor = selectedColor*diffuse;
+    gl_FragColor = selectedColor * diffuse;
 }

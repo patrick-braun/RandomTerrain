@@ -46,7 +46,10 @@ bool animate = true;
 bool drawPoints = false;
 bool wireFrame = false;
 
-float *d_ht = nullptr; // heightmap at time t
+int seed = 0;
+
+float *d_heightMap = nullptr;
+float *d_heightMapNext = nullptr;
 float2 *d_slope = nullptr;
 
 // pointers to device object
@@ -62,11 +65,19 @@ float animationRate = -0.001f;
 // kernels
 // #include <RandomTerrain_kernel.cu>
 
-extern "C" void cudaGenerateHeightmapKernel(float *d_ht, unsigned int width, unsigned int height,
-                                            unsigned int seed);
+extern "C" void
+cudaGenerateHeightmapKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height,
+                            int seed);
 
 extern "C" void
-cudaUpdateHeightmapKernel(float *d_heightMap, unsigned int width, unsigned int height, unsigned int seed);
+cudaCopyOverKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height);
+
+extern "C" void
+cudaPerlinKernel(float *d_heightMap, unsigned int width, unsigned int height, int seed);
+
+extern "C" void
+cudaUpdateHeightmapKernel(float *d_heightMap, float *d_heightMapNext, float *heightMapOut, unsigned int width,
+                          unsigned int height, unsigned int rowOffset);
 
 extern "C" void cudaCalculateSlopeKernel(float *h, float2 *slopeOut,
                                          unsigned int width,
@@ -144,12 +155,14 @@ void runTerrainGen(int argc, char **argv) {
 
     constexpr int htSize = meshSize * meshSize * sizeof(float);
     constexpr int slopeSize = meshSize * meshSize * sizeof(float2);
-    checkCudaErrors(cudaMalloc((void **) &d_ht, htSize));
+    checkCudaErrors(cudaMalloc((void **) &d_heightMap, htSize));
+    checkCudaErrors(cudaMalloc((void **) &d_heightMapNext, htSize));
     checkCudaErrors(cudaMalloc((void **) &d_slope, slopeSize));
 
-    unsigned int seed = rand();
+    seed = rand();
     printf("Generating terrain with seed: %u\n", seed);
-    cudaGenerateHeightmapKernel(d_ht, meshSize, meshSize, seed);
+    cudaPerlinKernel(d_heightMap, meshSize, meshSize, seed);
+    //cudaGenerateHeightmapKernel(d_heightMap, nullptr, meshSize, meshSize, seed);
 
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
@@ -191,21 +204,36 @@ void runCuda() {
     size_t num_bytes;
 
     // update heightmap values in vertex buffer
-    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_heightVB_resource, nullptr));
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_heightVB_resource, cudaStreamDefault));
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer(
             (void **) &g_hptr, &num_bytes, cuda_heightVB_resource));
 
-    cudaUpdateHeightmapKernel(g_hptr, meshSize, meshSize, 164666);
+
+    auto offset = static_cast<unsigned int>(animTime * 100) % meshSize;
+    if (offset == 0) {
+        cudaCopyOverKernel(d_heightMapNext, d_heightMap, meshSize, meshSize);
+        cudaPerlinKernel(d_heightMapNext, meshSize, meshSize, seed);
+        //cudaGenerateHeightmapKernel(d_heightMapNext, d_heightMap, meshSize, meshSize, seed);
+    }
+
+    cudaUpdateHeightmapKernel(
+            d_heightMap,
+            d_heightMapNext,
+            g_hptr,
+            meshSize,
+            meshSize,
+            offset
+    );
 
     // calculate slope for shading
-    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_slopeVB_resource, nullptr));
+    checkCudaErrors(cudaGraphicsMapResources(1, &cuda_slopeVB_resource, cudaStreamDefault));
     checkCudaErrors(cudaGraphicsResourceGetMappedPointer(
             (void **) &g_sptr, &num_bytes, cuda_slopeVB_resource));
 
     cudaCalculateSlopeKernel(g_hptr, g_sptr, meshSize, meshSize);
 
-    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_heightVB_resource, nullptr));
-    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_slopeVB_resource, nullptr));
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_heightVB_resource, cudaStreamDefault));
+    checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_slopeVB_resource, cudaStreamDefault));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -228,7 +256,7 @@ void display() {
 
     // render from the vbo
     glBindBuffer(GL_ARRAY_BUFFER, posVertexBuffer);
-    glVertexPointer(4, GL_FLOAT, 0, 0);
+    glVertexPointer(4, GL_FLOAT, 0, nullptr);
     glEnableClientState(GL_VERTEX_ARRAY);
 
     glBindBuffer(GL_ARRAY_BUFFER, heightVertexBuffer);
@@ -323,14 +351,14 @@ void cleanup() {
     deleteVBO(&slopeVertexBuffer);
 
     checkCudaErrors(cudaFree(d_slope));
-    checkCudaErrors(cudaFree(d_ht));
+    checkCudaErrors(cudaFree(d_heightMap));
+    checkCudaErrors(cudaFree(d_heightMapNext));
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 //! Keyboard events handler
 ////////////////////////////////////////////////////////////////////////////////
 void keyboard(unsigned char key, int /*x*/, int /*y*/) {
-    unsigned int seed = 0;
     switch (key) {
         case (27):
             cleanup();
@@ -344,14 +372,11 @@ void keyboard(unsigned char key, int /*x*/, int /*y*/) {
             drawPoints = !drawPoints;
             break;
 
-        case 'g':
-            seed = rand();
-            printf("Generating terrain with seed: %u\n", seed);
-            cudaGenerateHeightmapKernel(d_ht, meshSize, meshSize, seed);
-            break;
-
         case ' ':
             animate = !animate;
+            break;
+
+        default:
             break;
     }
 }
