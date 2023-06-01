@@ -1,36 +1,26 @@
 #include "noise.cuh"
 
-// Round a / b to nearest higher integer value
-int cuda_iDivUp(int a, int b) { return (a + (b - 1)) / b; }
+int idiv_ceil(int a, int b) { return (a + (b - 1)) / b; }
 
 // update height map values
 __global__ void
-generateHeightmapKernel(float *heightMap, float *heightMapPrev, unsigned int width, unsigned int height, int seed) {
-    unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
-    unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
-    unsigned int idx = y * width + x;
+generateHeightmapKernel(float *heightMap, unsigned int width, int seed, unsigned int rowOffset) {
+    int x = blockIdx.x * blockDim.x + threadIdx.x;
+    int y = blockIdx.y * blockDim.y + threadIdx.y;
+    int idx = y * width + x;
 
-    if (heightMapPrev != nullptr && y == 0) {
-        heightMap[idx] = heightMapPrev[(height - 1) * width + x];
-        return;
-    }
+    PerlinGenerator gen(seed);
+    float val = gen.fbm(make_float2(x, y + rowOffset * width), 0.005, 2.0, 0.5, 16);
 
-    float fx = static_cast<float>(x) / (blockDim.x * gridDim.x) * 16.0f;
-    float fy = static_cast<float>(y) / (blockDim.y * gridDim.y) * 16.0f;
+    val = val * 0.5f + 0.5f;
 
-    float3 pos = make_float3(fx, fy, 0.0f);
-
-    float tmp = __TMP__(pos, 0.2f, seed, 32, 1.8f, 0.45f);
-    if (tmp < 0.01) {
-        tmp = 0.01f;
-    }
-    heightMap[idx] = tmp;
+    heightMap[idx] = val > 0.3 ? val : 0.299;
 }
 
 // update height map values
 __global__ void updateHeightmapKernel(
-        float *heightMap,
-        float *heightMapNext,
+        const float *heightMap,
+        const float *heightMapNext,
         float *heightMapOut,
         unsigned int width,
         unsigned int height,
@@ -67,18 +57,18 @@ __global__ void calculateSlopeKernel(float *h, float2 *slopeOut,
 }
 
 extern "C" void
-cudaGenerateHeightmapKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height,
-                            int seed) {
+cudaGenerateHeightmapKernel(float *d_heightMap, unsigned int width, unsigned int height,
+                            int seed, unsigned int rowOffset) {
     dim3 block(8, 8, 1);
-    dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
-    generateHeightmapKernel<<<grid, block>>>(d_heightMap, d_heightMapPrev, width, height, seed);
+    dim3 grid(idiv_ceil(width, block.x), idiv_ceil(height, block.y), 1);
+    generateHeightmapKernel<<<grid, block>>>(d_heightMap, width, seed, rowOffset);
 }
 
 extern "C" void
 cudaUpdateHeightmapKernel(float *d_heightMap, float *d_heightMapNext, float *heightMapOut, unsigned int width,
                           unsigned int height, unsigned int rowOffset) {
     dim3 block(8, 8, 1);
-    dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
+    dim3 grid(idiv_ceil(width, block.x), idiv_ceil(height, block.y), 1);
     updateHeightmapKernel<<<grid, block>>>(d_heightMap, d_heightMapNext, heightMapOut, width, height, rowOffset);
 }
 
@@ -86,6 +76,6 @@ extern "C" void cudaCalculateSlopeKernel(float *hptr, float2 *slopeOut,
                                          unsigned int width,
                                          unsigned int height) {
     dim3 block(8, 8, 1);
-    dim3 grid(cuda_iDivUp(width, block.x), cuda_iDivUp(height, block.y), 1);
+    dim3 grid(idiv_ceil(width, block.x), idiv_ceil(height, block.y), 1);
     calculateSlopeKernel<<<grid, block>>>(hptr, slopeOut, width, height);
 }

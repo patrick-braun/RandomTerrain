@@ -3,7 +3,7 @@ varying vec3 eyeSpacePos;
 varying vec3 worldSpaceNormal;
 varying vec3 eyeSpaceNormal;
 varying vec4 pos;
-varying float scaledHeight;
+varying float height;
 
 uniform vec4 waterColor;
 uniform vec4 landColor;
@@ -22,12 +22,12 @@ void main()
 
     vec4 selectedColor;
 
-    if (scaledHeight < 0.01) {
+    if (height <= 0.3) {
         selectedColor = waterColor;
-    } else if (scaledHeight <= 0.2) {
+    } else if (height <= 0.7) {
         selectedColor = landColor;
-    } else if (scaledHeight <= 0.25) {
-        float pct = 20 * (scaledHeight - 0.2);
+    } else if (height <= 0.75) {
+        float pct = 20 * (height - 0.7);
         selectedColor = mix(landColor, mountainColor, pct);
     } else {
         selectedColor = mountainColor;

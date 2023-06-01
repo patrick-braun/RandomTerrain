@@ -17,7 +17,7 @@ const char *programDesc = "CUDA Random Terrain Generator";
 unsigned int windowW = 1024;
 unsigned int windowH = 1024;
 
-const unsigned int meshSize = 1024;
+const unsigned int meshSize = 256;
 
 // OpenGL vertex buffers
 GLuint posVertexBuffer;
@@ -67,8 +67,8 @@ float animationRate = -0.001f;
 // #include <RandomTerrain_kernel.cu>
 
 extern "C" void
-cudaGenerateHeightmapKernel(float *d_heightMap, float *d_heightMapPrev, unsigned int width, unsigned int height,
-                            int seed);
+cudaGenerateHeightmapKernel(float *d_heightMap, unsigned int width, unsigned int height,
+                            int seed, unsigned int rowOffset);
 
 extern "C" void
 cudaUpdateHeightmapKernel(float *d_heightMap, float *d_heightMapNext, float *heightMapOut, unsigned int width,
@@ -156,7 +156,7 @@ void runTerrainGen(int argc, char **argv) {
 
     seed = rand();
     printf("Generating terrain with seed: %u\n", seed);
-    cudaGenerateHeightmapKernel(d_heightMap, nullptr, meshSize, meshSize, seed);
+    cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, 0);
 
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
@@ -203,9 +203,10 @@ void runCuda() {
             (void **) &g_hptr, &num_bytes, cuda_heightVB_resource));
 
 
-    auto offset = step++ % meshSize;
+    auto offset = step % meshSize;
     if (offset == 0) {
-        cudaGenerateHeightmapKernel(d_heightMapNext, d_heightMap, meshSize, meshSize, seed);
+        cudaMemcpy(d_heightMap, d_heightMapNext, meshSize * meshSize * sizeof(float), cudaMemcpyDeviceToDevice);
+        cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, step);
     }
 
     cudaUpdateHeightmapKernel(
@@ -216,6 +217,8 @@ void runCuda() {
             meshSize,
             offset
     );
+
+    step++;
 
     // calculate slope for shading
     checkCudaErrors(cudaGraphicsMapResources(1, &cuda_slopeVB_resource, cudaStreamDefault));
@@ -267,7 +270,7 @@ void display() {
     GLuint uniHeightScale, uniChopiness, uniSize;
 
     uniHeightScale = glGetUniformLocation(shaderProg, "heightScale");
-    glUniform1f(uniHeightScale, 0.5f);
+    glUniform1f(uniHeightScale, 1.0f);
 
     uniChopiness = glGetUniformLocation(shaderProg, "chopiness");
     glUniform1f(uniChopiness, 1.0f);
