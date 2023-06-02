@@ -1,4 +1,5 @@
 #include "noise.cuh"
+#include <cassert>
 
 int idiv_ceil(int a, int b) { return (a + (b - 1)) / b; }
 
@@ -10,9 +11,9 @@ generateHeightmapKernel(float *heightMap, unsigned int width, int seed, unsigned
     int idx = y * width + x;
 
     PerlinGenerator gen(seed);
-    float val = gen.fbm(make_float2(x, y + rowOffset * width), 0.005, 2.0, 0.5, 16);
+    float2 virtual_pos = make_float2(x, y + rowOffset);
 
-    val = val * 0.5f + 0.5f;
+    float val = gen.fbm(virtual_pos, 0.005, 2.0, 0.5, 16);
 
     heightMap[idx] = val > 0.3 ? val : 0.299;
 }
@@ -26,16 +27,18 @@ __global__ void updateHeightmapKernel(
         unsigned int height,
         unsigned int rowOffset) {
 
+    assert(rowOffset < height);
+
     unsigned int x = blockIdx.x * blockDim.x + threadIdx.x;
     unsigned int y = blockIdx.y * blockDim.y + threadIdx.y;
     unsigned int idx = y * width + x;
 
-    if (y < rowOffset) {
-        unsigned int row = (height - rowOffset) + y;
-        heightMapOut[idx] = heightMapNext[row * width + x];
-    } else {
-        unsigned int row = y - rowOffset;
+    if (y + rowOffset < height) {
+        unsigned int row = y + rowOffset;
         heightMapOut[idx] = heightMap[row * width + x];
+    } else {
+        unsigned int row = (y + rowOffset) - height;
+        heightMapOut[idx] = heightMapNext[row * width + x];
     }
 }
 
@@ -54,6 +57,14 @@ __global__ void calculateSlopeKernel(float *h, float2 *slopeOut,
     }
 
     slopeOut[idx] = slope;
+}
+
+__global__ void
+getTerrainHeightKernel(const float *heightMap, float *out, unsigned int width, unsigned int height, int x, int y) {
+    assert(x >= 0 && x < width);
+    assert(y >= 0 && y < height);
+
+    *out = heightMap[y * width + x];
 }
 
 extern "C" void
@@ -78,4 +89,10 @@ extern "C" void cudaCalculateSlopeKernel(float *hptr, float2 *slopeOut,
     dim3 block(8, 8, 1);
     dim3 grid(idiv_ceil(width, block.x), idiv_ceil(height, block.y), 1);
     calculateSlopeKernel<<<grid, block>>>(hptr, slopeOut, width, height);
+}
+
+extern "C" void
+cudaGetTerrainHeightKernel(const float *d_heightMap, float *out, unsigned int width, unsigned int height, int x,
+                           int y) {
+    getTerrainHeightKernel<<<1, 1>>>(d_heightMap, out, width, height, x, y);
 }

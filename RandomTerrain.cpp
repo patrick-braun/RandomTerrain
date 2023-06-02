@@ -14,8 +14,8 @@ const char *programDesc = "CUDA Random Terrain Generator";
 
 ////////////////////////////////////////////////////////////////////////////////
 // constants
-unsigned int windowW = 1024;
-unsigned int windowH = 1024;
+unsigned int windowW = 1600;
+unsigned int windowH = 900;
 
 const unsigned int meshSize = 256;
 
@@ -40,11 +40,10 @@ float rotateY = 0.0f;
 
 float translateX = 0.0f;
 float translateY = 0.0f;
-float translateZ = -2.0f;
+float translateZ = -3.0f;
 
 bool animate = false;
-bool drawPoints = false;
-bool wireFrame = false;
+bool followMode = false;
 
 int seed = 0;
 unsigned int step = 0;
@@ -52,6 +51,7 @@ unsigned int step = 0;
 float *d_heightMap = nullptr;
 float *d_heightMapNext = nullptr;
 float2 *d_slope = nullptr;
+float *g_height = nullptr;
 
 // pointers to device object
 float *g_hptr = nullptr;
@@ -62,9 +62,6 @@ float animTime = 0.0f;
 float prevTime = 0.0f;
 float animationRate = -0.001f;
 
-////////////////////////////////////////////////////////////////////////////////
-// kernels
-// #include <RandomTerrain_kernel.cu>
 
 extern "C" void
 cudaGenerateHeightmapKernel(float *d_heightMap, unsigned int width, unsigned int height,
@@ -77,6 +74,9 @@ cudaUpdateHeightmapKernel(float *d_heightMap, float *d_heightMapNext, float *hei
 extern "C" void cudaCalculateSlopeKernel(float *h, float2 *slopeOut,
                                          unsigned int width,
                                          unsigned int height);
+extern "C" void
+cudaGetTerrainHeightKernel(const float *d_heightMap, float *out, unsigned int width, unsigned int height, int x,
+                           int y);
 
 ////////////////////////////////////////////////////////////////////////////////
 // forward declarations
@@ -119,8 +119,7 @@ int main(int argc, char **argv) {
             "[%s]\n\n"
             "Left mouse button          - rotate\n"
             "Middle mouse button        - pan\n"
-            "Right mouse button         - zoom\n"
-            "'w' key                    - toggle wireframe\n",
+            "Right mouse button         - zoom\n",
             programDesc);
 
     srand(static_cast<unsigned int>(time(nullptr)));
@@ -153,10 +152,11 @@ void runTerrainGen(int argc, char **argv) {
     checkCudaErrors(cudaMalloc((void **) &d_heightMap, htSize));
     checkCudaErrors(cudaMalloc((void **) &d_heightMapNext, htSize));
     checkCudaErrors(cudaMalloc((void **) &d_slope, slopeSize));
+    checkCudaErrors(cudaMallocHost((void **) &g_height, sizeof(float)));
 
     seed = rand();
     printf("Generating terrain with seed: %u\n", seed);
-    cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, 0);
+    cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, 256);
 
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
@@ -218,6 +218,10 @@ void runCuda() {
             offset
     );
 
+    if (followMode) {
+        cudaGetTerrainHeightKernel(g_hptr, g_height, meshSize, meshSize, (meshSize / 2), 0);
+    }
+
     step++;
 
     // calculate slope for shading
@@ -245,7 +249,12 @@ void display() {
     // set view matrix
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
-    glTranslatef(translateX, translateY, translateZ);
+
+    if (followMode) {
+        glTranslatef(translateX, -0.1f - *g_height, translateZ);
+    } else {
+        glTranslatef(translateX, translateY, translateZ);
+    }
     glRotatef(rotateX, 1.0, 0.0, 0.0);
     glRotatef(rotateY, 0.0, 1.0, 0.0);
 
@@ -267,15 +276,7 @@ void display() {
     glUseProgram(shaderProg);
 
     // Set default uniform variables parameters for the vertex shader
-    GLuint uniHeightScale, uniChopiness, uniSize;
-
-    uniHeightScale = glGetUniformLocation(shaderProg, "heightScale");
-    glUniform1f(uniHeightScale, 1.0f);
-
-    uniChopiness = glGetUniformLocation(shaderProg, "chopiness");
-    glUniform1f(uniChopiness, 1.0f);
-
-    uniSize = glGetUniformLocation(shaderProg, "size");
+    GLuint uniSize = glGetUniformLocation(shaderProg, "size");
     glUniform2f(uniSize, (float) meshSize, (float) meshSize);
 
     // Set default uniform variables parameters for the pixel shader
@@ -299,18 +300,16 @@ void display() {
 
     glColor3f(1.0, 1.0, 1.0);
 
-    if (drawPoints) {
-        glDrawArrays(GL_POINTS, 0, meshSize * meshSize);
-    } else {
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-        glPolygonMode(GL_FRONT_AND_BACK, wireFrame ? GL_LINE : GL_FILL);
-        glDrawElements(GL_TRIANGLE_STRIP, ((meshSize * 2) + 2) * (meshSize - 1),
-                       GL_UNSIGNED_INT, 0);
-        glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, indexBuffer);
 
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-    }
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+    glDrawElements(GL_TRIANGLE_STRIP, ((meshSize * 2) + 2) * (meshSize - 1),
+                   GL_UNSIGNED_INT, 0);
+    glPolygonMode(GL_FRONT_AND_BACK, GL_FILL);
+
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
+
 
     glDisableClientState(GL_VERTEX_ARRAY);
     glClientActiveTexture(GL_TEXTURE0);
@@ -350,6 +349,14 @@ void cleanup() {
     checkCudaErrors(cudaFree(d_heightMapNext));
 }
 
+void moveToFollow() {
+    rotateX = 30.0;
+    rotateY = 180.0;
+    translateX = 0.0;
+    translateY = -0.5;
+    translateZ = -1.0;
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 //! Keyboard events handler
 ////////////////////////////////////////////////////////////////////////////////
@@ -358,17 +365,16 @@ void keyboard(unsigned char key, int /*x*/, int /*y*/) {
         case (27):
             cleanup();
             exit(EXIT_SUCCESS);
-
-        case 'w':
-            wireFrame = !wireFrame;
-            break;
-
-        case 'p':
-            drawPoints = !drawPoints;
-            break;
-
         case ' ':
             animate = !animate;
+            break;
+        case 'f':
+            if (!followMode) {
+                moveToFollow();
+                followMode = true;
+            } else {
+                followMode = false;
+            }
             break;
 
         default:
@@ -392,6 +398,12 @@ void mouse(int button, int state, int x, int y) {
 }
 
 void motion(int x, int y) {
+    if (followMode) {
+        mouseOldX = x;
+        mouseOldY = y;
+        return;
+    }
+
     float dx, dy;
     dx = (float) (x - mouseOldX);
     dy = (float) (y - mouseOldY);
@@ -415,7 +427,7 @@ void reshape(int w, int h) {
 
     glMatrixMode(GL_PROJECTION);
     glLoadIdentity();
-    gluPerspective(60.0, (double) w / (double) h, 0.1, 10.0);
+    gluPerspective(75.0, (double) w / (double) h, 0.1, 10.0);
 
     windowW = w;
     windowH = h;
@@ -449,7 +461,7 @@ bool initGL(int *argc, char **argv) {
 
     if (!areGLExtensionsSupported(
             "GL_ARB_vertex_buffer_object GL_ARB_pixel_buffer_object")) {
-        fprintf(stderr, "Error: failed to get minimal extensions for demo\n");
+        fprintf(stderr, "Error: failed to get minimal extensions for terrain generator\n");
         fprintf(stderr, "This sample requires:\n");
         fprintf(stderr, "  OpenGL version 2.0\n");
         fprintf(stderr, "  GL_ARB_vertex_buffer_object\n");

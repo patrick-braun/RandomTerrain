@@ -125,6 +125,6 @@ public:
             freq *= lacunarity;
         }
 
-        return res;
+        return res * 0.5f + 0.5f; // from [-1, 1] to [0, 1]
     }
 };

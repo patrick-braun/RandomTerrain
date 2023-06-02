@@ -5,7 +5,6 @@ varying vec3 eyeSpaceNormal;
 varying vec4 pos;
 varying float height;
 
-uniform float chopiness;
 uniform vec2 size;
 
 
