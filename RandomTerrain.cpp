@@ -42,6 +42,15 @@ float translateX = 0.0f;
 float translateY = 0.0f;
 float translateZ = -3.0f;
 
+float oldRotateX;
+float oldRotateY;
+
+float oldTranslateX;
+float oldTranslateY;
+float oldTranslateZ;
+
+unsigned int followTriggeredAtStep = 0;
+
 bool animate = false;
 bool followMode = false;
 
@@ -156,7 +165,7 @@ void runTerrainGen(int argc, char **argv) {
 
     seed = rand();
     printf("Generating terrain with seed: %u\n", seed);
-    cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, 256);
+    cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, 0);
 
     sdkCreateTimer(&timer);
     sdkStartTimer(&timer);
@@ -206,7 +215,7 @@ void runCuda() {
     auto offset = step % meshSize;
     if (offset == 0) {
         cudaMemcpy(d_heightMap, d_heightMapNext, meshSize * meshSize * sizeof(float), cudaMemcpyDeviceToDevice);
-        cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, step);
+        cudaGenerateHeightmapKernel(d_heightMapNext, meshSize, meshSize, seed, step + meshSize);
     }
 
     cudaUpdateHeightmapKernel(
@@ -350,6 +359,13 @@ void cleanup() {
 }
 
 void moveToFollow() {
+    oldRotateX = rotateX;
+    oldRotateY = rotateY;
+
+    oldTranslateX = translateX;
+    oldTranslateY = translateY;
+    oldTranslateZ = translateZ;
+
     rotateX = 30.0;
     rotateY = 180.0;
     translateX = 0.0;
