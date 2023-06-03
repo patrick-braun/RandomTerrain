@@ -5,6 +5,7 @@
 #include <cuda_gl_interop.h>
 #include <helper_cuda.h>
 #include <helper_functions.h>
+#include "util.h"
 
 #include <GL/freeglut.h>
 
@@ -35,27 +36,31 @@ char *fragShaderPath = nullptr;
 int mouseOldX;
 int mouseOldY;
 int mouseButtons = 0;
-float rotateX = 20.0f;
-float rotateY = 0.0f;
 
-float translateX = 0.0f;
-float translateY = 0.0f;
-float translateZ = -3.0f;
+struct CameraInfo cam = {
+        20.0,
+        180.0,
+        0.0,
+        0.0,
+        -3.0
+};
+struct CameraInfo oldCam = cam;
+const struct CameraInfo followCam = {
+        30.0,
+        180.0,
+        0.0,
+        -0.5,
+        -1.5
+};
 
-float oldRotateX;
-float oldRotateY;
-
-float oldTranslateX;
-float oldTranslateY;
-float oldTranslateZ;
-
-unsigned int followTriggeredAtStep = 0;
 
 bool animate = false;
 bool followMode = false;
+bool cameraLocked = false;
 
 int seed = 0;
 unsigned int step = 0;
+int followTriggeredAtStep = -1;
 
 float *d_heightMap = nullptr;
 float *d_heightMapNext = nullptr;
@@ -244,6 +249,48 @@ void runCuda() {
     checkCudaErrors(cudaGraphicsUnmapResources(1, &cuda_slopeVB_resource, cudaStreamDefault));
 }
 
+inline void adjustCamera() {
+    if (followMode) {
+        if (followTriggeredAtStep + 100 > step) { // moving to follow camera pos over 100 frames
+            float xdiff = (followCam.translateX - oldCam.translateX) / 100.0f;
+            float ydiff = (followCam.translateY - oldCam.translateY) / 100.0f;
+            float zdiff = (followCam.translateZ - oldCam.translateZ) / 100.0f;
+            float axdiff = fmod(followCam.rotateX - oldCam.rotateX, 360.0f) / 100.0f;
+            float aydiff = fmod(followCam.rotateY - oldCam.rotateY, 360.0f) / 100.0f;
+
+            cam.translateX += xdiff;
+            cam.translateY += ydiff;
+            cam.translateZ += zdiff;
+            cam.rotateX += axdiff;
+            cam.rotateY += aydiff;
+        } else {
+            cam = followCam;
+            cam.translateY = -0.1f - *g_height;
+        }
+    } else {
+        if (followTriggeredAtStep >= 0 && followTriggeredAtStep + 100 > step) { // moving to previous camera pos over 100 frames
+            float xdiff = (oldCam.translateX - followCam.translateX) / 100.0f;
+            float ydiff = (oldCam.translateY - followCam.translateY) / 100.0f;
+            float zdiff = (oldCam.translateZ - followCam.translateZ) / 100.0f;
+            float axdiff = fmod(oldCam.rotateX - followCam.rotateX, 360.0f) / 100.0f;
+            float aydiff = fmod(oldCam.rotateY - followCam.rotateY, 360.0f) / 100.0f;
+
+            cam.translateX += xdiff;
+            cam.translateY += ydiff;
+            cam.translateZ += zdiff;
+            cam.rotateX += axdiff;
+            cam.rotateY += aydiff;
+        }
+        if (followTriggeredAtStep + 100 <= step) {
+            cameraLocked = false;
+        }
+    }
+
+    glTranslatef(cam.translateX, cam.translateY, cam.translateZ);
+    glRotatef(cam.rotateX, 1.0, 0.0, 0.0);
+    glRotatef(cam.rotateY, 0.0, 1.0, 0.0);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 //! Display callback
 ////////////////////////////////////////////////////////////////////////////////
@@ -259,13 +306,7 @@ void display() {
     glMatrixMode(GL_MODELVIEW);
     glLoadIdentity();
 
-    if (followMode) {
-        glTranslatef(translateX, -0.1f - *g_height, translateZ);
-    } else {
-        glTranslatef(translateX, translateY, translateZ);
-    }
-    glRotatef(rotateX, 1.0, 0.0, 0.0);
-    glRotatef(rotateY, 0.0, 1.0, 0.0);
+    adjustCamera();
 
     // render from the vbo
     glBindBuffer(GL_ARRAY_BUFFER, posVertexBuffer);
@@ -356,21 +397,19 @@ void cleanup() {
     checkCudaErrors(cudaFree(d_slope));
     checkCudaErrors(cudaFree(d_heightMap));
     checkCudaErrors(cudaFree(d_heightMapNext));
+    checkCudaErrors(cudaFreeHost(g_height));
 }
 
-void moveToFollow() {
-    oldRotateX = rotateX;
-    oldRotateY = rotateY;
+void enterFollowMode() {
+    followMode = true;
+    cameraLocked = true;
+    oldCam = cam;
+    followTriggeredAtStep = step;
+}
 
-    oldTranslateX = translateX;
-    oldTranslateY = translateY;
-    oldTranslateZ = translateZ;
-
-    rotateX = 30.0;
-    rotateY = 180.0;
-    translateX = 0.0;
-    translateY = -0.5;
-    translateZ = -1.0;
+void exitFollowMode() {
+    followMode = false;
+    followTriggeredAtStep = step;
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -385,14 +424,8 @@ void keyboard(unsigned char key, int /*x*/, int /*y*/) {
             animate = !animate;
             break;
         case 'f':
-            if (!followMode) {
-                moveToFollow();
-                followMode = true;
-            } else {
-                followMode = false;
-            }
+            followMode ? exitFollowMode() : enterFollowMode();
             break;
-
         default:
             break;
     }
@@ -414,7 +447,7 @@ void mouse(int button, int state, int x, int y) {
 }
 
 void motion(int x, int y) {
-    if (followMode) {
+    if (cameraLocked) {
         mouseOldX = x;
         mouseOldY = y;
         return;
@@ -425,13 +458,13 @@ void motion(int x, int y) {
     dy = (float) (y - mouseOldY);
 
     if (mouseButtons == 1) {
-        rotateX += dy * 0.2f;
-        rotateY += dx * 0.2f;
+        cam.rotateX += dy * 0.2f;
+        cam.rotateY += dx * 0.2f;
     } else if (mouseButtons == 2) {
-        translateX += dx * 0.01f;
-        translateY -= dy * 0.01f;
+        cam.translateX += dx * 0.01f;
+        cam.translateY -= dy * 0.01f;
     } else if (mouseButtons == 4) {
-        translateZ += dy * 0.01f;
+        cam.translateZ += dy * 0.01f;
     }
 
     mouseOldX = x;
