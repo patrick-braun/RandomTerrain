@@ -345,7 +345,7 @@ void display() {
     glUniform4f(uniSkyColor, 1.0f, 1.0f, 1.0f, 1.0f);
 
     uniLightDir = glGetUniformLocation(shaderProg, "lightDir");
-    glUniform3f(uniLightDir, 0.0f, 1.0f, 0.0f);
+    glUniform3f(uniLightDir, 0.5f, 1.0f, 0.5f);
     // end of uniform settings
 
     glColor3f(1.0, 1.0, 1.0);
