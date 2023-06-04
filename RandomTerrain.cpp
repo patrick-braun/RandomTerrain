@@ -562,7 +562,7 @@ void createMeshIndexBuffer(GLuint *id, int w, int h) {
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, size, 0, GL_STATIC_DRAW);
 
     // fill with indices for rendering mesh as triangle strips
-    GLuint *indices = (GLuint *) glMapBuffer(GL_ELEMENT_ARRAY_BUFFER, GL_WRITE_ONLY);
+    auto *indices = (GLuint *) glMapBuffer(GL_ELEMENT_ARRAY_BUFFER, GL_WRITE_ONLY);
 
     if (!indices) {
         return;
@@ -588,7 +588,7 @@ void createMeshPositionVBO(GLuint *id, int w, int h) {
     createVBO(id, w * h * 4 * sizeof(float));
 
     glBindBuffer(GL_ARRAY_BUFFER, *id);
-    float *pos = (float *) glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
+    auto *pos = (float *) glMapBuffer(GL_ARRAY_BUFFER, GL_WRITE_ONLY);
 
     if (!pos) {
         return;
@@ -627,8 +627,13 @@ int attachShader(GLuint prg, GLenum type, const char *name) {
     src = (char *) malloc(size);
 
     fseek(fp, 0, SEEK_SET);
-    fread(src, sizeof(char), size, fp);
+    auto size_read = fread(src, sizeof(char), size, fp);
     fclose(fp);
+    if (size_read != size) {
+        fprintf(stderr, "Error reading shader file: %s\n", name);
+        free(src);
+        return 0;
+    }
 
     shader = glCreateShader(type);
     glShaderSource(shader, 1, (const char **) &src, (const GLint *) &size);
