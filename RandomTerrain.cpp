@@ -251,7 +251,7 @@ void runCuda() {
 
 inline void adjustCamera() {
     if (followMode) {
-        if (followTriggeredAtStep + 100 > step) { // moving to follow camera pos over 100 frames
+        if (followTriggeredAtStep + 100 > step) { // moving to follow camera pos over 100 steps
             float xdiff = (followCam.translateX - oldCam.translateX) / 100.0f;
             float ydiff = (followCam.translateY - oldCam.translateY) / 100.0f;
             float zdiff = (followCam.translateZ - oldCam.translateZ) / 100.0f;
@@ -268,7 +268,7 @@ inline void adjustCamera() {
             cam.translateY = -0.1f - *g_height;
         }
     } else {
-        if (followTriggeredAtStep >= 0 && followTriggeredAtStep + 100 > step) { // moving to previous camera pos over 100 frames
+        if (followTriggeredAtStep >= 0 && followTriggeredAtStep + 100 > step) { // moving to previous camera pos over 100 steps
             float xdiff = (oldCam.translateX - followCam.translateX) / 100.0f;
             float ydiff = (oldCam.translateY - followCam.translateY) / 100.0f;
             float zdiff = (oldCam.translateZ - followCam.translateZ) / 100.0f;
@@ -403,6 +403,7 @@ void cleanup() {
 void enterFollowMode() {
     followMode = true;
     cameraLocked = true;
+    animate = true;
     oldCam = cam;
     followTriggeredAtStep = step;
 }
